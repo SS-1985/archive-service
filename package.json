@@ -3,11 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev:api": "tsx src/api.ts",
-    "start": "node --loader tsx src/api.ts",
-    "migrate": "tsx src/migrate.ts",
-    "backfill": "tsx src/archive-backfill.ts",
-    "update": "tsx src/archive-updater.ts"
+    "start": "node --import tsx src/api.ts",
+    "dev:api": "node --import tsx src/api.ts",
+    "migrate": "node --import tsx src/migrate.ts",
+    "backfill": "node --import tsx src/archive-backfill.ts",
+    "update": "node --import tsx src/archive-updater.ts"
   },
   "dependencies": {
     "cors": "2.8.5",
