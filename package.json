@@ -1,0 +1,24 @@
+{
+  "name": "archive-service",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:api": "tsx src/api.ts",
+    "migrate": "tsx src/migrate.ts",
+    "backfill": "tsx src/archive-backfill.ts",
+    "update": "tsx src/archive-updater.ts"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "pg": "^8.12.0",
+    "undici": "^6.19.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.7.5",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3"
+  }
+}
