@@ -1,5 +1,21 @@
-// --- VISIBILITY ENDPOINTS ---
-// A) See if env vars are actually present on THIS service
+// src/api.ts
+import express from "express";
+import cors from "cors";
+import { pool } from "./db.js";
+
+// 1) create app FIRST
+const app = express();
+
+// 2) CORS (allow all if unset; otherwise comma list)
+const allow = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(",").map(s => s.trim())
+  : "*";
+app.use(cors({ origin: allow as any }));
+
+// 3) HEALTH (must not depend on DB)
+app.get("/healthz", (_req, res) => res.send("ok"));
+
+// 4) DEBUG: env presence (never prints secrets)
 app.get("/debug/env", (_req, res) => {
   res.json({
     has_DATABASE_URL: !!process.env.DATABASE_URL,
@@ -9,29 +25,33 @@ app.get("/debug/env", (_req, res) => {
   });
 });
 
-// B) Call FMP from THIS service to prove the key is used and reachable
+// 5) DEBUG: ping FMP from THIS service (Node 22 has global fetch)
 app.get("/debug/fmp-ping", async (_req, res) => {
   try {
     const params = new URLSearchParams({
-      page: "0", size: "1", apikey: process.env.FMP_API_KEY || ""
+      page: "0",
+      size: "1",
+      apikey: process.env.FMP_API_KEY || ""
     });
     const url = `https://financialmodelingprep.com/api/v3/press-releases?${params}`;
     const r = await fetch(url);
     const text = await r.text();
+    let sample: any = null;
+    try { sample = JSON.parse(text)?.[0] ?? null; } catch { sample = text.slice(0, 200); }
     res.status(r.status).json({
       status: r.status,
       ok: r.ok,
       usedKeyPrefix: process.env.FMP_API_KEY ? process.env.FMP_API_KEY.slice(0,4) + "…" : null,
-      sample: (() => { try { return JSON.parse(text)?.[0] ?? null; } catch { return text.slice(0,150); } })()
+      sample
     });
-  } catch (e:any) {
-    res.status(500).json({ ok:false, error: e?.message || String(e) });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 
-// C) DB quick stats (counts + earliest/latest by origin/type)
+// 6) DEBUG: quick DB stats
 app.get("/debug/db-stats", async (_req, res) => {
-  try{
+  try {
     const { rows } = await pool.query(`
       select origin, type,
              count(*)::int as total,
@@ -42,8 +62,14 @@ app.get("/debug/db-stats", async (_req, res) => {
       order by 1,2
     `);
     res.json(rows);
-  }catch(e:any){
+  } catch (e: any) {
     res.status(500).json({ error: e?.message || String(e) });
   }
 });
-// --- /VISIBILITY ENDPOINTS ---
+
+// 7) (optional) your existing /api/archive route can go here
+
+// 8) start server
+app.listen(process.env.PORT || 3000, () => {
+  console.log("Archive API ready on", process.env.PORT || 3000);
+});
