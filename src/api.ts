@@ -1,93 +1,49 @@
-import express from "express";
-import cors from "cors";
-import { pool } from "./db.js";
-
-const app = express();
-app.use(cors({ origin: (process.env.CORS_ORIGIN?.split(",") ?? "*") as any }));
-
-// Browse/search with cursor pagination
-app.get("/api/archive", async (req, res) => {
-  const { q, symbol, type, origin, from, to, hasImage, limit = "20", cursor } = req.query as any;
-  const lim = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
-  const where: string[] = [];
-  const vals: any[] = [];
-  let i = 1;
-
-  if (origin && origin !== "both") { where.push(`origin = $${i++}`); vals.push(origin); }
-  if (type && type !== "both") { where.push(`type = $${i++}`); vals.push(type); }
-  if (from) { where.push(`published_at >= $${i++}`); vals.push(new Date(from)); }
-  if (to) { where.push(`published_at <= $${i++}`); vals.push(new Date(to)); }
-  if (hasImage === "true") { where.push(`image_url is not null and image_url <> ''`); }
-
-  if (symbol) {
-    const syms = String(symbol)
-      .split(",")
-      .map((s) => s.trim().toUpperCase())
-      .filter(Boolean);
-    if (syms.length) { where.push(`symbol && $${i++}`); vals.push(syms); }
-  }
-
-  if (q) {
-    where.push(
-      `to_tsvector('english', coalesce(title,'')||' '||coalesce(summary,'')||' '||coalesce(body,'')) @@ plainto_tsquery($${i++})`
-    );
-    vals.push(q);
-  }
-
-  if (cursor) {
-    const { publishedAt, id } = JSON.parse(Buffer.from(String(cursor), "base64").toString());
-    where.push(`(published_at, id) < ($${i++}, $${i++})`);
-    vals.push(new Date(publishedAt), id);
-  }
-
-  const sql = `
-    select id, origin, type, source, symbol, published_at, title, summary, url, image_url
-    from archive_items
-    ${where.length ? "where " + where.join(" and ") : ""}
-    order by published_at desc, id desc
-    limit ${lim + 1}
-  `;
-  const { rows } = await pool.query(sql, vals);
-  const hasMore = rows.length > lim;
-  const items = rows.slice(0, lim).map((r) => ({
-    id: r.id,
-    origin: r.origin,
-    type: r.type,
-    source: r.source,
-    symbol: r.symbol,
-    publishedAt: r.published_at,
-    title: r.title,
-    summary: r.summary,
-    url: r.url,
-    imageUrl: r.image_url,
-  }));
-  const nextCursor = hasMore
-    ? Buffer.from(JSON.stringify({ publishedAt: rows[lim].published_at, id: rows[lim].id })).toString("base64")
-    : null;
-
-  res.json({ items, nextCursor });
+// --- VISIBILITY ENDPOINTS ---
+// A) See if env vars are actually present on THIS service
+app.get("/debug/env", (_req, res) => {
+  res.json({
+    has_DATABASE_URL: !!process.env.DATABASE_URL,
+    has_FMP_API_KEY: !!process.env.FMP_API_KEY,
+    has_POLYGON_API_KEY: !!process.env.POLYGON_API_KEY,
+    NODE_ENV: process.env.NODE_ENV ?? null
+  });
 });
 
-// ---- NEW: quick totals & freshness per origin/type
-app.get("/api/archive-stats", async (_req, res) => {
-  const q = `
-    select origin, type,
-           count(*)::text as total,
-           max(published_at) as last_published
-    from archive_items
-    group by origin, type
-    order by origin, type
-  `;
-  const { rows } = await pool.query(q);
-  res.json({ stats: rows });
+// B) Call FMP from THIS service to prove the key is used and reachable
+app.get("/debug/fmp-ping", async (_req, res) => {
+  try {
+    const params = new URLSearchParams({
+      page: "0", size: "1", apikey: process.env.FMP_API_KEY || ""
+    });
+    const url = `https://financialmodelingprep.com/api/v3/press-releases?${params}`;
+    const r = await fetch(url);
+    const text = await r.text();
+    res.status(r.status).json({
+      status: r.status,
+      ok: r.ok,
+      usedKeyPrefix: process.env.FMP_API_KEY ? process.env.FMP_API_KEY.slice(0,4) + "…" : null,
+      sample: (() => { try { return JSON.parse(text)?.[0] ?? null; } catch { return text.slice(0,150); } })()
+    });
+  } catch (e:any) {
+    res.status(500).json({ ok:false, error: e?.message || String(e) });
+  }
 });
 
-// ---- NEW: earliest timestamp stored
-app.get("/api/archive-earliest", async (_req, res) => {
-  const { rows } = await pool.query(`select min(published_at) as earliest from archive_items`);
-  res.json(rows[0] ?? { earliest: null });
+// C) DB quick stats (counts + earliest/latest by origin/type)
+app.get("/debug/db-stats", async (_req, res) => {
+  try{
+    const { rows } = await pool.query(`
+      select origin, type,
+             count(*)::int as total,
+             min(published_at) as earliest,
+             max(published_at) as latest
+      from archive_items
+      group by 1,2
+      order by 1,2
+    `);
+    res.json(rows);
+  }catch(e:any){
+    res.status(500).json({ error: e?.message || String(e) });
+  }
 });
-
-app.get("/healthz", (_req, res) => res.send("ok"));
-
-app.listen(process.env.PORT || 3000, () => console.log("Archive API ready"));
+// --- /VISIBILITY ENDPOINTS ---
